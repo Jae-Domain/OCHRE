@@ -1,5 +1,5 @@
 # Requisites
-
+#Run bisection controller with perfect draw forecaswting
 import os
 import datetime as dt
 import pandas as pd
@@ -296,7 +296,7 @@ for s in setpoint_range: #run simulation for every setpoint in valid range
     to_save = to_save[14::15]
 
     to_save["Water Heating Electric Power"] = pd.Series(kwh_energy, index=to_save.index)
-    to_save["Setpoings"] = avg_setpoints
+    to_save["Setpoints"] = avg_setpoints
    
 
     to_save = to_save[:-1] 

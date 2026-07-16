@@ -424,7 +424,7 @@ class HeatPumpWaterHeater(ElectricResistanceWaterHeater):
     modes = ["Heat Pump On", "Upper On", "Lower On", "Off"]
     optional_inputs = WaterHeater.optional_inputs + ["Zone Wet Bulb Temperature (C)"]
 
-    def __init__(self, hp_only_mode=False, water_nodes=12, **kwargs):
+    def __init__(self, hp_only_mode=True, water_nodes=12, **kwargs):
         super().__init__(water_nodes=water_nodes, **kwargs)
 
         # Control parameters

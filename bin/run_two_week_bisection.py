@@ -34,7 +34,10 @@ sites = [ 22096, 13438, 11531, 23744,
 10441,
 90015,
 90030, 21578, 22897, 90023, 90130, 99094, 90051, 90069, 90131, 90034, 99148, 99162, 99103, 99092, 99084
-] #all sites
+] 
+
+sites = [90030]
+#all sites
 for site_number in sites:
 #site_number = '11531' #90023 #10292#'10441'
     tank_volume = 151 #40g
@@ -58,9 +61,6 @@ for site_number in sites:
 
     #get raw_data
     raw_data = pd.read_csv(f"bin\\raw_data\\{site_number}_raw.csv")
-    raw_data["readTime"] = pd.to_datetime(raw_data["readTime"])
-    raw_data = raw_data[raw_data["readTime"] > pd.Timestamp("2013-01-01")]
-
     # Convert flow to liters
     raw_data["Flow"] = raw_data["Flow"] * 3.78541
 
