@@ -23,12 +23,16 @@ UA_VALUES = {40: 2.638889,
              65: 2.955556,
              80: 3.008333}
 
-SITE_CAPACITIES = {  
-                    50: [1, 4, 22, 25, 30], #1, 4, 30
-                   65: [29, 28, 27, 19, 23, 24], #, 2, 10,  error with 7, 16, 21
+SITE_CAPACITIES = { 50: [1, 4, 22, 25, 30], #1, 4, 30
+                   65: [21, 29, 28, 27, 19, 23, 24], #, 2, 10,  error with 7, 16, 21
                    80: [3, 5, 8, 9, 11, 12, 15, 18]} #Taken from NBI dataset 
 
-#Sites 23 and 24 are problematic, run at 125 and 140 setpoint respectively
+#high temp sites
+SITE_CAPACITIES = { 50: [1, 22, 25], #1, 4, 30
+                   65: [21, 28, 27, 19,], #, 2, 10,  error with 7, 16, 21
+                   80: [3, 5, 8,15]} #Taken from NBI dataset 
+
+
 
 #Run 120V simulation for n simulation days
 
@@ -36,7 +40,7 @@ SITE_CAPACITIES = {
 setpoint_default = 48.9 #Assumed 120 degree setpoint
 #setpoint_default = 51.67 #125
 # setpoint_default = 60 #140
-deadband_default = 8.17 # in C
+deadband_default = 5.56 #8.17 # in C
 max_setpoint = 60
 min_setpoint = 49
 water_nodes = 12
@@ -44,17 +48,19 @@ water_nodes = 12
 
 #Testing Parameters- edit me
 #------------------------------------------------------------#
-gallons_array = [ 65, 80]
+gallons_array = [50, 65, 80]
 
 for gallons in gallons_array:
     capacity = gallons * GAL_IN_L #Gallons to L
     simulation_days = 350
 
 
-    setpoint_default = 48.9 #Assumed 120 degree setpoint
+    #setpoint_default = 48.9 #Assumed 120 degree setpoint
+    setpoint_default = 60
     sites = SITE_CAPACITIES[gallons]
 
     for site_number in sites: #runs simulations for specified site number
+
         #Data values
         #temperature input values
         temp_data = pd.read_csv(f'ochre\\defaults\\Input Files\\Temperature Values\\120V_temperatures_{site_number}.csv')
@@ -63,6 +69,12 @@ for gallons in gallons_array:
 
         if site_number == 23 or site_number == 24:
             setpoint_default = 51.67 if site_number == 23 else 60
+
+        # if site_number in [1, 3, 5, 8, 15, 21, 25, 27, 28]:
+        #     setpoint_default = 50
+        
+        # if site_number in [19, 22]:
+        #     setpoint_default = 55
 
         simulation_days = min(350, (len(temp_data) // MIN_IN_DAY) - 1)
         print(f"Simulating Site {site_number} for {simulation_days} days")

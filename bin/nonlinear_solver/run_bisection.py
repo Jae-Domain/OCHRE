@@ -21,7 +21,7 @@ from ochre import HeatPumpWaterHeater
 
 import os
 import numpy as np
-from scipy.optimize import minimize, NonlinearConstraint
+from scipy.optimize import minimize, NonlinearConstraint, Bounds
 import time
 
 #Global Parameters 
@@ -152,65 +152,162 @@ def predict_two_node(setpoint, temp_n1, temp_n2, temp_amb, temp_mains, draw, dur
     except Exception as e:
         # Return penalty value (110 C) for invalid configurations
         # This tells optimizer this setpoint is out of bounds
-        print(f"Warning: Simulation failed for setpoint {setpoint_default}C: {str(e)}")
-        return pd.Series([110.0] * 15)
+        print(f"Warning: Simulation failed: for setpoint {setpoint}{str(e)}")
+        return temp_n1, temp_n2, np.full(15, 0.0)
 
 
 
-# --- 3. Objective Function ---
-def objective(x):
-    return sum(x)  # Minimize the sum of setpoints
+import numpy as np
+from scipy.optimize import minimize, Bounds
 
-# --- 4. Black-Box Nonlinear Constraint Function ---
+
+
+# #Boundary Optimization
+# # --- 1. Clean Objective Function ---
+# def base_objective(x):
+#     """
+#     Keep the objective function purely focused on minimizing total setpoints.
+#     Do NOT embed manual penalties here when using native constraints.
+#     """
+#     return np.sum(x)
+
+
+# # --- 2. Black-Box Simulation Constraint Function ---
+# def constraint_wrapper(x, T1, T2, Tamb, Tmains, d):
+#     results = []
+#     t1 = T1
+#     t2 = T2
+#     for i in range(len(x)):
+#         try:
+#             t1, t2, result = predict_two_node(x[i], t1, t2, Tamb, Tmains, d[i])
+#             results.append(result)
+#         except Exception as e:
+#             # Avoid returning zeros (which breaks physics steps); 
+#             # Return a realistic low temperature value instead.
+#             results.append(np.full(15, -10.0)) 
+
+#     return np.hstack(results)
+
+
+# # --- 3. Main Solver Function ---
+# def solve_nonlinear(current_setpoint, T1, T2, Tamb, Tmains, d):
+#     T_lower_bound = 49.0  # Min outlet threshold (C)
+#     p = 8                 # Time periods
+
+#     # Initial guess within bounds [49, 60]
+#     x0 = np.full(p, 60)
+#     draws = np.array(d).reshape(8, 15)
+
+#     # COBYLA constraint format: fun(x) >= 0
+#     # Must evaluate to >= 0 when valid, < 0 when violated.
+#     def temp_constraint_fun(x):
+#         outlet_temps = constraint_wrapper(x, T1, T2, Tamb, Tmains, draws)
+#         # Returns minimum margin: positive means pass, negative means violation
+#         if outlet_temps.min() < 49.0:
+#             print(outlet_temps.min())
+#         return np.min(outlet_temps) - T_lower_bound
+
+#     # Define bounds as inequality constraints for COBYLA
+#     # COBYLA requires bound constraints as explicit dicts g(x) >= 0
+#     constraints = [
+#         {'type': 'ineq', 'fun': temp_constraint_fun},
+#         {'type': 'ineq', 'fun': lambda x: x - 49.0}, # Lower bound: x >= 49
+#         {'type': 'ineq', 'fun': lambda x: 60.0 - x}  # Upper bound: x <= 60
+#     ]
+
+#     # --- 4. Solve Using COBYLA ---
+#     result = minimize(
+#         base_objective,
+#         x0,
+#         method='COBYLA',
+#         constraints=constraints,
+#         options={'rhobeg': 1.0, 'maxiter': 500, 'catol': 1e-2}
+#     )
+
+#     optimized_setpoints = np.clip(result.x, 49.0, 60.0)
+
+#     print("Optimization Success:", result.success)
+#     print("Message:", result.message)
+#     print("Optimized Setpoints:", np.round(optimized_setpoints, 2))
+    
+#     return np.round(optimized_setpoints, 2)
+
+#Penalty Optimization
+def penalized_objective(x, T1, T2, Tamb, Tmains, draws, min_target=49.0):
+    """
+    Evaluates setpoints. If ANY outlet temperature falls below min_target (49 C),
+    returns a severe penalty equivalent to overriding setpoints to 60 C.
+    """
+    # Base objective: Sum of setpoints
+    base_cost = np.sum(x)
+    
+    # Run simulation across all periods
+    outlet_temps = constraint_wrapper(x, T1, T2, Tamb, Tmains, draws)
+    min_outlet_temp = np.min(outlet_temps)
+    
+    # Check for violation
+    if min_outlet_temp < min_target:
+        # Distance of violation (how far below 49 C)
+        violation_depth = min_target - min_outlet_temp
+        
+        # Calculate max cost if all setpoints were 60 C (8 * 60 = 480)
+        max_setpoint_cost = len(x) * 60.0
+        
+        # Base penalty jumps to max possible cost, plus a steep multiplier
+        # based on violation depth to push the solver back toward safety
+        penalty = (max_setpoint_cost - base_cost) + 1000.0 * (violation_depth ** 2)
+        return base_cost + penalty
+
+    return base_cost
+
+
+# --- 2. Black-Box Simulation Constraint Function ---
 def constraint_wrapper(x, T1, T2, Tamb, Tmains, d):
     results = []
     t1 = T1
     t2 = T2
-    for i in range(len(x)): #for each 15 minute time period
+    for i in range(len(x)):
         try:
-            t1, t2, result = predict_two_node(x[i], t1, t2, Tamb, Tmains, d[i]) #run a simulation for each 15 minute time period, passing in the current setpoint and the previous node temperatures
+            t1, t2, result = predict_two_node(x[i], t1, t2, Tamb, Tmains, d[i])
             results.append(result)
         except Exception as e:
-            print(f"Simulation {i} failed: {str(e)}")
-            results.append(pd.Series([110.0] * 15))
+            # Return realistic low temp value if model fails
+            results.append(np.full(15, -10.0)) 
 
     return np.hstack(results)
 
-#into nonlinear solver, pass current setpoint (for each 15 minute interval) solve_nonlinear(current_setpoint=50.0, T1=50, T2=50, Tamb=[[20.0]*15]*8, Tmains=[[20.0]*15]*8, d=[[2.5]*15]*8)
-#   T1/ T2 - currrent temp, Tamb, Tmains, d - 8x15 arrays of ambient temp, mains temp, and draw for each 15 minute interval
-def solve_nonlinear(current_setpoint, T1, T2, Tamb, Tmains, d):
-    # Define the constraint: T_out must be between 40.6 and 100
-    # --- 2. Parameters ---
-    T_lower_bound = 40.6
-    p = 8 #time periods
-    x0 = [current_setpoint] * p  # Initial guess for setpoints
 
-    #reshape draw values to 8x15 array
+# --- 3. Main Solver Function ---
+def solve_nonlinear(current_setpoint, T1, T2, Tamb, Tmains, d):
+    p = 8  # Time periods
     draws = np.array(d).reshape(8, 15)
 
-    # Pass extra arguments via a lambda function. 
-# Also make sure to pass 'p' so it's accessible inside the wrapper!
-    nl_constraint = NonlinearConstraint(
-        lambda x: constraint_wrapper(x, T1, T2, Tamb, Tmains, draws), 
-        lb=T_lower_bound, 
-        ub=100
-    )
-
-    # --- 5. Setpoint Bounds & Setup ---
+    # Initial guess starts at safe high temperature (60 C)
+    x0 = np.full(p, 60.0)
     bounds = [(49.0, 60.0) for _ in range(p)]
 
-    # --- 6. Solve Using a True Black-Box Method ---
+    # --- 4. Solve Using Powell (Derivative-Free & Handles Penalty Functions Great) ---
     result = minimize(
-        objective,
+        lambda x: penalized_objective(x, T1, T2, Tamb, Tmains, draws, min_target=49.0),
         x0,
-        method='SLSQP',  # Derivative-free trust-region SQP
+        method='Powell',  # Powell handles penalty step jumps far better than COBYLA
         bounds=bounds,
-        constraints=nl_constraint
+        options={'ftol': 1e-2, 'maxfev': 400}
     )
 
-    print("Success:", result.success)
-    print("Optimized Setpoints:", np.round(result.x, 2))
-    return np.round(result.x, 2)  # Return the optimized setpoints
+    optimized_setpoints = np.clip(np.round(result.x, 2), 49.0, 60.0)
+
+    # Final Check: If the best solution still yields outlet temp < 49 C, force setpoints to 60 C
+    final_temps = constraint_wrapper(optimized_setpoints, T1, T2, Tamb, Tmains, draws)
+    
+    if np.min(final_temps) < 49.0:
+        print(f"Violation detected (Min Outlet Temp: {np.min(final_temps):.2f}°C). Overriding setpoints to 60°C.")
+        optimized_setpoints = np.full(p, 60.0)
+
+    print("Optimization Success:", result.success)
+    print("Optimized Setpoints:", optimized_setpoints)
+    
+    return optimized_setpoints
 
 def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw): #performs 5 bisection control iterations
     min_temp = MIN_SETPOINT
@@ -236,11 +333,11 @@ def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw):
 
 #Methods : bisection, nonlinear, load_shift, setpoint
 def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPOINT_DEFAULT, tank_volume = TANK_VOLUME):
-    df = pd.read_csv("ochre\\defaults\\Input Files\\Ecotope_flow\\net_flow_90030.csv", header=None)
+    df = pd.read_csv(f"ochre\\defaults\\Input Files\\Ecotope_flow\\net_flow_{site_number}.csv", header=None)
     first_line = df.iloc[TWO_WEEKS_MIN, 0] #get start_time two weeks into dataset
     start_time = dt.datetime.strptime(first_line.split(",")[0], "%Y-%m-%d %H:%M:%S")
 
-    simulation_days = len(df) // (24 * 60)  - 21 # Calculate the number of days based on the number of rows in the CSV file
+    simulation_days = 30 #len(df) // (24 * 60)  - 21 # Calculate the number of days based on the number of rows in the CSV file
     time_interval = 2 # adjust setpoint every 2 hours
 
     equipment_args = {
@@ -312,7 +409,7 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
 
 
         #Change setpoint every 15 minutes        
-        elif (t.minute % 15 == 0):
+        if (t.minute % 15 == 0):
 
             if method != 'load_shifting' and method != 'constant':
                 #Every 15 minutes, get predicted draw for next 2 hours, solve for dynamic setpoint
@@ -330,11 +427,13 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
 
                 previous_rate = previous_rate[15:]#[60 * 15:] #shuffle previous rate by 15 minutes
 
-            setpoints.append(setpoint)
+
             
         control_signal = {
             "Setpoint": setpoint
         }
+
+        setpoints.append(setpoint)
 
         # Run with controls
         _ = hpwh.update(control_signal=control_signal)
@@ -356,16 +455,19 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
         "Hot Water Outlet Temperature (C)",
         #"T_WH1",
         #"T_WH2"
-        "T_WH3",
+        #"T_WH3",
         #"T_WH7",
-        "T_WH10",
+        #"T_WH10",
         #"T_WH12",
         #"T_AMB",
         "Water Heating Heat Pump COP (-)"
     ]
 
-    #avg_setpoints = np.convolve(setpoints, np.ones(15)/15, 'same')
-    #avg_setpoints = avg_setpoints[14::15]
+    avg_setpoints = np.convolve(setpoints, np.ones(15)/15, 'same')
+    avg_setpoints = avg_setpoints[0::15]
+
+    avg_withdraw_rate = np.convolve(withdraw_rate, np.ones(15), 'same')
+    draw_data = avg_withdraw_rate[0::15]
 
     df['Energy (kWh)'] = df['Water Heating Electric Power (kW)']/ 60  # energy per minute
     kwh_energy = df['Energy (kWh)'].resample('15T').sum()  # sum up 15 mins = total kWh per interval
@@ -383,33 +485,33 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
     injection_15min = df['HotWaterInjection_kWh'].resample('15T').sum()
     unmet_demand_15min = df['Hot Water Unmet Demand (kWh)'].resample('15T').sum()
 
-
-
     # For the DataFrame, select columns and calculate the rolling average for each column
     to_save = df[cols_to_save].rolling(window=15).mean()
 
-    #electric_energy_kwh = electric_energy_kwh[14::15]
-    #resample hot water delivered 
-    avg_withdraw_rate = np.convolve(withdraw_rate, np.ones(15), 'same')
-    draw_data = avg_withdraw_rate[14::15]
-
     to_save = df.loc[:, cols_to_save]
-
     to_save["Water Heating Mode"] = df["Water Heating Mode"]
+    to_save = to_save[0::15].copy()
+    # Ensure all series use the same index
 
-    to_save = to_save[14::15].copy()
 
-    to_save["Water Heating Electric Power (kWh)"] = kwh_energy.values
-    to_save["Hot Water Delivered (kWh)"] = delivered_15min.values
-    to_save["Hot Water Heat Loss (kWh)"] = loss_15min.values
-    to_save["Hot Water Heat Injected (kWh)"] = injection_15min.values
-    to_save["Hot Water Unmet Demand (kWh)"] = unmet_demand_15min.values
+    try:
+        to_save["Water Heating Electric Power"] = kwh_energy.values
+        to_save["Hot Water Delivered (kWh)"] = delivered_15min.values
+        to_save["Hot Water Heat Loss (kWh)"] = loss_15min.values
+        to_save["Hot Water Heat Injected (kWh)"] = injection_15min.values
+        to_save["Hot Water Unmet Demand (kWh)"] = unmet_demand_15min.values
+    except:
+        to_save["Water Heating Electric Power"] = kwh_energy.values[1:]
+        to_save["Hot Water Delivered (kWh)"] = delivered_15min.values[1:]
+        to_save["Hot Water Heat Loss (kWh)"] = loss_15min.values[1:]
+        to_save["Hot Water Heat Injected (kWh)"] = injection_15min.values[1:]
+        to_save["Hot Water Unmet Demand (kWh)"] = unmet_demand_15min.values[1:]
 
 
 
     #to_save["Water Heating Electric Power"] = kwh_energy #pd.Series(kwh_energy, index=to_save.index)
     to_save["Draw Data"] = pd.Series(draw_data, index=to_save.index)
-    to_save["Setpoints"] = setpoints 
+    to_save["Setpoints"] = avg_setpoints 
 
     to_save = to_save[:-1] 
     if method == 'constant':
@@ -421,58 +523,71 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
 
 # ================================
 # SITES
-# ================================
-sites = [
-    22096, 13438, 11531, 23744, 11289, 13265, 23666,
+# ================================ 22096
+
+sites = [22096, 13438,
+     11531, 23744, 11289, 13265, 23666, 
     90028, 90050, 90135, 10441, 90015, 90030,
     21578, 22897, 90023, 90130, 99094, 90051,
-    90069, 90131, 90034, 99148, 99162, 99103,
+     90131, 90034, 99148, 99162, 99103,
     99092, 99084
 ]
 
-#Good test sites
-sites = [90069]
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import pandas as pd
+
+
+#Good test sites 90069 90130, 21578, 90023,
+sites = [90069, 90130, 21578, 90023, 90051, 90131, 90034]
 
 time_metrics = pd.DataFrame(columns=["Site", "Method", "Bisection Time (s)", "Nonlinear Time (s)"])
 
 for site_number in sites:
 
-    #Run at constant setpoint and elevated setpoint
-    simulate_12_node(site_number, "constant", 49) #run at nominal setpoint
-    simulate_12_node(site_number, "constant", 60) #run at elevated setpoint
+    # try:
 
-    method = "bisection" #nonlinear or bisection
+    #     # #Run at constant setpoint and elevated setpoint
+    #     simulate_12_node(site_number, "constant", 49) #run at nominal setpoint
+    #     simulate_12_node(site_number, "constant", 60) #run at elevated setpoint
+
+    #     # #load shifting
+    #     # method = "load_shifting" 
+    #     simulate_12_node(site_number, "load_shifting")
+    # except:
+    #     continue
+
+    # try:
+    #     method = "bisection" #nonlinear or bisection
+
+    #     bisection_start = time.process_time()
+    #     simulate_12_node(site_number, method)
+    #     bisection_end = time.process_time()
+    #     elapsed = bisection_end - bisection_start
+    #     print("Bisection Time (s): ", elapsed)
+    # except:
+    #     continue
+
+
+
     try:
-        bisection_start = time.process_time()
-        simulate_12_node(site_number, method)
-        bisection_end = time.process_time()
-        elapsed = bisection_end - bisection_start
-        print("Bisection Time (s): ", elapsed)
-    except:
-        print(f"Simulation failed for site {site_number} using bisection method.")
-        continue
 
-
-    try:
-        nonlinear_start = time.process_time()
         method = "nonlinear" #nonlinear or bisection
         simulate_12_node(site_number, method)
-        nonlinear_end = time.process_time()
+
     except:
         print(f"Simulation failed for site {site_number} using nonlinear method.")
         continue
 
-    #load shifting
-    method = "load_shifting" 
-    simulate_12_node(site_number, method)
 
 
-    #Store the timing metrics
-    time_metrics = time_metrics.append({
-        "Site": site_number,
-        "Method": "Bisection",
-        "Bisection Time (s)": bisection_end - bisection_start,
-        "Nonlinear Time (s)": nonlinear_end - nonlinear_start
-    }, ignore_index=True)
 
-time_metrics.to_csv("ecotope_bisection_nonlinear_timing_metrics.csv", index=False)
+#     #Store the timing metrics
+#     time_metrics = time_metrics.append({
+#         "Site": site_number,
+#         "Method": "Bisection",
+#         "Bisection Time (s)": bisection_end - bisection_start,
+#         "Nonlinear Time (s)": nonlinear_end - nonlinear_start
+#     }, ignore_index=True)
+
+# time_metrics.to_csv("ecotope_bisection_nonlinear_timing_metrics.csv", index=False)
