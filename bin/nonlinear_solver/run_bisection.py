@@ -283,7 +283,7 @@ def solve_nonlinear(current_setpoint, T1, T2, Tamb, Tmains, d):
     draws = np.array(d).reshape(8, 15)
 
     # Initial guess starts at safe high temperature (60 C)
-    x0 = np.full(p, 60.0)
+    x0 = np.full(p, max(49, current_setpoint))
     bounds = [(49.0, 60.0) for _ in range(p)]
 
     # --- 4. Solve Using Powell (Derivative-Free & Handles Penalty Functions Great) ---
@@ -332,7 +332,7 @@ def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw):
 
 
 #Methods : bisection, nonlinear, load_shift, setpoint
-def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPOINT_DEFAULT, tank_volume = TANK_VOLUME):
+def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPOINT_DEFAULT, tank_volume = TANK_VOLUME, draw = "rolling"):
     df = pd.read_csv(f"ochre\\defaults\\Input Files\\Ecotope_flow\\net_flow_{site_number}.csv", header=None)
     first_line = df.iloc[TWO_WEEKS_MIN, 0] #get start_time two weeks into dataset
     start_time = dt.datetime.strptime(first_line.split(",")[0], "%Y-%m-%d %H:%M:%S")
@@ -366,6 +366,7 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
     withdraw_rate = df.iloc[:, 1].to_numpy()  # Assuming the second column contains the flow data
     previous_rate = df.copy() #back up of last two weeks, holds rolling average
     withdraw_rate = withdraw_rate[TWO_WEEKS_MIN:TWO_WEEKS_MIN + len(times)] #stagger by two weeks
+    perfect_draws = withdraw_rate.copy()
     ambient = 20
     mains = 7
 
@@ -406,14 +407,18 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
                 setpoint = 49
             else:
                 setpoint = 51.5
-
-
+        
         #Change setpoint every 15 minutes        
         if (t.minute % 15 == 0):
 
             if method != 'load_shifting' and method != 'constant':
                 #Every 15 minutes, get predicted draw for next 2 hours, solve for dynamic setpoint
-                predict_draws = get_rolling_flow_avg(previous_rate, t)
+                if draw == "rolling":
+                    predict_draws = get_rolling_flow_avg(previous_rate, t)
+                elif draw == "perfect": #every 15 minutes, we extract the first 15 elements
+                    predict_draws = perfect_draws[0:120] #gets two hour horizon
+                    # then remove 15 values
+                    perfect_draws = perfect_draws[15:]
 
                 if method == "nonlinear":
                     setpoints_predict = solve_nonlinear(setpoint, hpwh.model.next_states[2], hpwh.model.next_states[9], ambient, mains, predict_draws) #get node temperatures from 3 and 10
@@ -517,7 +522,7 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
     if method == 'constant':
         to_save.to_csv(f'output_site_{site_number}_{setpoint}.csv', header=True, index=False)    
     else:
-        to_save.to_csv(f'output_site_{site_number}_{method}.csv', header=True, index=False)
+        to_save.to_csv(f'output_site_{site_number}_{method}_{draw}.csv', header=True, index=False)
 
 
 
@@ -538,8 +543,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import pandas as pd
 
 
-#Good test sites 90069 90130, 21578, 90023,
-sites = [90069, 90130, 21578, 90023, 90051, 90131, 90034]
+#Good test sites 90069 90130, 21578, 90023, 90051, 90131, 90034
+#sites = [90069, 90130, 21578, 90023, 90051, 90131, 90034]
+sites = [22096, 13438, 90069]
 
 time_metrics = pd.DataFrame(columns=["Site", "Method", "Bisection Time (s)", "Nonlinear Time (s)"])
 
@@ -560,11 +566,11 @@ for site_number in sites:
     # try:
     #     method = "bisection" #nonlinear or bisection
 
-    #     bisection_start = time.process_time()
-    #     simulate_12_node(site_number, method)
-    #     bisection_end = time.process_time()
-    #     elapsed = bisection_end - bisection_start
-    #     print("Bisection Time (s): ", elapsed)
+    #     #bisection_start = time.process_time()
+    #     simulate_12_node(site_number, method, draw="perfect")
+    #     #bisection_end = time.process_time()
+    #     #elapsed = bisection_end - bisection_start
+    #     #print("Bisection Time (s): ", elapsed)
     # except:
     #     continue
 
@@ -573,7 +579,7 @@ for site_number in sites:
     try:
 
         method = "nonlinear" #nonlinear or bisection
-        simulate_12_node(site_number, method)
+        simulate_12_node(site_number, method, draw="perfect")
 
     except:
         print(f"Simulation failed for site {site_number} using nonlinear method.")
