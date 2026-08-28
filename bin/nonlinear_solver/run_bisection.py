@@ -162,76 +162,6 @@ from scipy.optimize import minimize, Bounds
 
 
 
-# #Boundary Optimization
-# # --- 1. Clean Objective Function ---
-# def base_objective(x):
-#     """
-#     Keep the objective function purely focused on minimizing total setpoints.
-#     Do NOT embed manual penalties here when using native constraints.
-#     """
-#     return np.sum(x)
-
-
-# # --- 2. Black-Box Simulation Constraint Function ---
-# def constraint_wrapper(x, T1, T2, Tamb, Tmains, d):
-#     results = []
-#     t1 = T1
-#     t2 = T2
-#     for i in range(len(x)):
-#         try:
-#             t1, t2, result = predict_two_node(x[i], t1, t2, Tamb, Tmains, d[i])
-#             results.append(result)
-#         except Exception as e:
-#             # Avoid returning zeros (which breaks physics steps); 
-#             # Return a realistic low temperature value instead.
-#             results.append(np.full(15, -10.0)) 
-
-#     return np.hstack(results)
-
-
-# # --- 3. Main Solver Function ---
-# def solve_nonlinear(current_setpoint, T1, T2, Tamb, Tmains, d):
-#     T_lower_bound = 49.0  # Min outlet threshold (C)
-#     p = 8                 # Time periods
-
-#     # Initial guess within bounds [49, 60]
-#     x0 = np.full(p, 60)
-#     draws = np.array(d).reshape(8, 15)
-
-#     # COBYLA constraint format: fun(x) >= 0
-#     # Must evaluate to >= 0 when valid, < 0 when violated.
-#     def temp_constraint_fun(x):
-#         outlet_temps = constraint_wrapper(x, T1, T2, Tamb, Tmains, draws)
-#         # Returns minimum margin: positive means pass, negative means violation
-#         if outlet_temps.min() < 49.0:
-#             print(outlet_temps.min())
-#         return np.min(outlet_temps) - T_lower_bound
-
-#     # Define bounds as inequality constraints for COBYLA
-#     # COBYLA requires bound constraints as explicit dicts g(x) >= 0
-#     constraints = [
-#         {'type': 'ineq', 'fun': temp_constraint_fun},
-#         {'type': 'ineq', 'fun': lambda x: x - 49.0}, # Lower bound: x >= 49
-#         {'type': 'ineq', 'fun': lambda x: 60.0 - x}  # Upper bound: x <= 60
-#     ]
-
-#     # --- 4. Solve Using COBYLA ---
-#     result = minimize(
-#         base_objective,
-#         x0,
-#         method='COBYLA',
-#         constraints=constraints,
-#         options={'rhobeg': 1.0, 'maxiter': 500, 'catol': 1e-2}
-#     )
-
-#     optimized_setpoints = np.clip(result.x, 49.0, 60.0)
-
-#     print("Optimization Success:", result.success)
-#     print("Message:", result.message)
-#     print("Optimized Setpoints:", np.round(optimized_setpoints, 2))
-    
-#     return np.round(optimized_setpoints, 2)
-
 #Penalty Optimization
 def penalized_objective(x, T1, T2, Tamb, Tmains, draws, min_target=49.0):
     """
@@ -321,9 +251,9 @@ def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw):
         draw = np.append(draw, [0] * (135 - len(draw))) 
     for iteration in range(5):
         t1, t2, t_out = predict_two_node(setpoint, temp_n1, temp_n2, ambient, mains, draw) #returns outlet temperature
-        if (t_out < BISECTION_TEMP).any(): #Ifoutput temperatures fall below 49C, increase setpoint      
-            lower_bound = setpoint #update lowerbound
-            setpoint = setpoint + (upper_bound - setpoint)/2
+        if (t_out < BISECTION_TEMP).any(): #If any output temperatures fall below 49C, increase setpoint      
+            lower_bound = setpoint #setpoint must be above current setpoint
+            setpoint = setpoint + (upper_bound - setpoint)/2 #move halfway to upper bound
             if setpoint > max_temp:
                 setpoint = max_temp
         else: #setpoint is viable
@@ -333,8 +263,10 @@ def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw):
             upper_bound = setpoint
             setpoint = setpoint - (setpoint - lower_bound)/2
             if setpoint < min_temp:
+            if setpoint < min_temp + 0.5: #if setpoint is too close to min_temp, return min_temp
                 setpoint = min_temp
     return best_guess
+    return upper_bound
 
 
 #Methods : bisection, nonlinear, load_shift, setpoint
