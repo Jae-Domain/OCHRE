@@ -242,11 +242,12 @@ def solve_nonlinear(current_setpoint, T1, T2, Tamb, Tmains, d):
 def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw): #performs 5 bisection control iterations
     min_temp = MIN_SETPOINT
     max_temp = MAX_SETPOINT
+
+    #Moving upper and lower bounds for viable setpoints
     upper_bound = max_temp
     lower_bound = min_temp
 
     setpoint = setpoint_initial
-    len_d = len(draw)
     if len(draw) < 135:
         draw = np.append(draw, [0] * (135 - len(draw))) 
     for iteration in range(5):
@@ -257,15 +258,12 @@ def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw):
             if setpoint > max_temp:
                 setpoint = max_temp
         else: #setpoint is viable
-            best_guess = setpoint
             if setpoint == MIN_SETPOINT:    
                 return setpoint
             upper_bound = setpoint
             setpoint = setpoint - (setpoint - lower_bound)/2
-            if setpoint < min_temp:
             if setpoint < min_temp + 0.5: #if setpoint is too close to min_temp, return min_temp
                 setpoint = min_temp
-    return best_guess
     return upper_bound
 
 
