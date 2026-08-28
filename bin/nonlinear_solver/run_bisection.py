@@ -312,20 +312,25 @@ def solve_nonlinear(current_setpoint, T1, T2, Tamb, Tmains, d):
 def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw): #performs 5 bisection control iterations
     min_temp = MIN_SETPOINT
     max_temp = MAX_SETPOINT
+    upper_bound = max_temp
+    lower_bound = min_temp
+
     setpoint = setpoint_initial
     len_d = len(draw)
     if len(draw) < 135:
-        draw = np.append(draw, [0] * 135) 
+        draw = np.append(draw, [0] * (135 - len(draw))) 
     for iteration in range(5):
         t1, t2, t_out = predict_two_node(setpoint, temp_n1, temp_n2, ambient, mains, draw) #returns outlet temperature
         if (t_out < BISECTION_TEMP).any(): #Ifoutput temperatures fall below 49C, increase setpoint      
-            setpoint = setpoint + (max_temp - setpoint)/2
+            lower_bound = setpoint #update lowerbound
+            setpoint = setpoint + (upper_bound - setpoint)/2
             if setpoint > max_temp:
                 setpoint = max_temp
-        else:
+        else: #setpoint is viable
             if setpoint == MIN_SETPOINT:    
                 return setpoint
-            setpoint = setpoint - (setpoint - min_temp)/2
+            upper_bound = setpoint
+            setpoint = setpoint - (setpoint - lower_bound)/2
             if setpoint < (min_temp + 0.25):
                 setpoint = min_temp
     return setpoint
