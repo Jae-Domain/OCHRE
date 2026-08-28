@@ -327,13 +327,14 @@ def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw):
             if setpoint > max_temp:
                 setpoint = max_temp
         else: #setpoint is viable
+            best_guess = setpoint
             if setpoint == MIN_SETPOINT:    
                 return setpoint
             upper_bound = setpoint
             setpoint = setpoint - (setpoint - lower_bound)/2
-            if setpoint < (min_temp + 0.25):
+            if setpoint < min_temp:
                 setpoint = min_temp
-    return setpoint
+    return best_guess
 
 
 #Methods : bisection, nonlinear, load_shift, setpoint
