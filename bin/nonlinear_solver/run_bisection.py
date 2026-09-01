@@ -74,7 +74,7 @@ def get_rolling_flow_avg(data, current_date, horizon = 2):# needs to receive pre
     return predicted_flow
 
 #2 node simulation
-def predict_two_node(setpoint, temp_n1, temp_n2, temp_amb, temp_mains, draw, duration = 15, tank_volume = TANK_VOLUME):
+def predict_two_node(setpoint, temp_n1, temp_n2, temp_amb, temp_mains, draw, duration = 15, tank_volume = TANK_VOLUME, nodes=2):
     equipment_args = {
         "start_time": dt.datetime(2026, 1, 1, 0, 0), #10292, 90023,  # year, month, day, hour, minute
         "time_res": dt.timedelta(minutes=1),
@@ -87,7 +87,7 @@ def predict_two_node(setpoint, temp_n1, temp_n2, temp_amb, temp_mains, draw, dur
         "Tank Height (m)": 1.22,
         "UA (W/K)": 2.17,
         "HPWH COP (-)": 4.5,
-        "water_nodes": 2
+        "water_nodes": nodes
     }
 
     # Create water draw schedule
@@ -115,7 +115,12 @@ def predict_two_node(setpoint, temp_n1, temp_n2, temp_amb, temp_mains, draw, dur
     # Initialize equipment
     hpwh = HeatPumpWaterHeater(schedule=schedule, **equipment_args)
 
-    hpwh.model.states[:] = np.array([temp_n1, temp_n2])
+
+
+    if nodes == 1:
+        hpwh.model.states[:] = np.array([(temp_n1 + temp_n2) / 2])
+    else:
+        hpwh.model.states[:] = np.array([temp_n1, temp_n2])
 
     # Simulate
     control_signal = {}
@@ -135,16 +140,31 @@ def predict_two_node(setpoint, temp_n1, temp_n2, temp_amb, temp_mains, draw, dur
         
         df = hpwh.finalize()
 
-        cols_to_save = [
-            "Hot Water Outlet Temperature (C)",
-            "T_WH1",
-            "T_WH2"
-        ]
+        if nodes == 1:
+            cols_to_save = [
+                        "T_WH1",
+                        "Hot Water Outlet Temperature (C)",
+             ]
+            to_save = df.loc[:, cols_to_save]
+            to_save = to_save[:-1]
+        
+            t_1 = to_save["T_WH1"].values[-1]
+            t_2 = t_1  # For single-node simulation, both node temperatures are the same
+        
+        else:
+            cols_to_save = [
+                "Hot Water Outlet Temperature (C)",
+                "T_WH1",
+                "T_WH2"
+            ]
+            to_save = df.loc[:, cols_to_save]
+            to_save = to_save[:-1]
 
-        to_save = df.loc[:, cols_to_save]
-        to_save = to_save[:-1]
-        t_1 = to_save["T_WH1"].values[-1]   
-        t_2 = to_save["T_WH2"].values[-1]
+            t_1 = to_save["T_WH1"].values[-1]   
+            t_2 = to_save["T_WH2"].values[-1]
+
+
+
 
         #return to_save
         return t_1, t_2, to_save["Hot Water Outlet Temperature (C)"].to_numpy()
@@ -239,7 +259,7 @@ def solve_nonlinear(current_setpoint, T1, T2, Tamb, Tmains, d):
     
     return optimized_setpoints
 
-def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw): #performs 5 bisection control iterations
+def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw, sim_nodes=2, n_iter = 5): #performs 5 bisection control iterations
     min_temp = MIN_SETPOINT
     max_temp = MAX_SETPOINT
 
@@ -250,13 +270,14 @@ def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw):
     setpoint = setpoint_initial
     if len(draw) < 135:
         draw = np.append(draw, [0] * (135 - len(draw))) 
-    for iteration in range(5):
-        t1, t2, t_out = predict_two_node(setpoint, temp_n1, temp_n2, ambient, mains, draw) #returns outlet temperature
+    for iteration in range(n_iter):
+        t1, t2, t_out = predict_two_node(setpoint, temp_n1, temp_n2, ambient, mains, draw, nodes = sim_nodes) #returns outlet temperature
         if (t_out < BISECTION_TEMP).any(): #If any output temperatures fall below 49C, increase setpoint      
             lower_bound = setpoint #setpoint must be above current setpoint
             setpoint = setpoint + (upper_bound - setpoint)/2 #move halfway to upper bound
-            if setpoint > max_temp:
+            if setpoint > max_temp - 0.5:
                 setpoint = max_temp
+                return setpoint
         else: #setpoint is viable
             if setpoint == MIN_SETPOINT:    
                 return setpoint
@@ -268,12 +289,12 @@ def bisection_control(temp_n1, temp_n2, setpoint_initial, ambient, mains, draw):
 
 
 #Methods : bisection, nonlinear, load_shift, setpoint
-def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPOINT_DEFAULT, tank_volume = TANK_VOLUME, draw = "rolling"):
+def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPOINT_DEFAULT, tank_volume = TANK_VOLUME, draw = "rolling", sim_nodes = 2, bisection_iter = 5):
     df = pd.read_csv(f"ochre\\defaults\\Input Files\\Ecotope_flow\\net_flow_{site_number}.csv", header=None)
     first_line = df.iloc[TWO_WEEKS_MIN, 0] #get start_time two weeks into dataset
     start_time = dt.datetime.strptime(first_line.split(",")[0], "%Y-%m-%d %H:%M:%S")
 
-    simulation_days = 30 #len(df) // (24 * 60)  - 21 # Calculate the number of days based on the number of rows in the CSV file
+    simulation_days = len(df) // (24 * 60)  - 21 # Calculate the number of days based on the number of rows in the CSV file
     time_interval = 2 # adjust setpoint every 2 hours
 
     equipment_args = {
@@ -327,6 +348,14 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
     setpoints_predict = [] #setpoints predicted by nonlinear solver
     setpoint = setpoint_default     
     #generate noise for setpoint profile
+
+    # ==================== LOGGING SETUP ====================
+    log_file_path = f"timestep_log_site_{site_number}_{method}_{draw}.csv"
+    log_file = open(log_file_path, "w")
+    # Write header with requested metrics
+    log_file.write("Timestamp,Hot Water Unmet Demand (kWh),Energy (kWh)\n")
+    # =======================================================
+
     for t in hpwh.sim_times:
         # Change setpoint based on hour of day
         #get optimal setpoint
@@ -364,7 +393,7 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
                     setpoint = setpoints_predict.pop(0)
 
                 elif method == "bisection":
-                    setpoint = bisection_control(hpwh.model.next_states[2], hpwh.model.next_states[9], setpoint, ambient, mains, predict_draws) #get node temperatures from 3 and 10
+                    setpoint = bisection_control(hpwh.model.next_states[2], hpwh.model.next_states[9], setpoint, ambient, mains, predict_draws, sim_nodes=sim_nodes, n_iter = bisection_iter) #get node temperatures from 3 and 10
 
                 previous_rate = previous_rate[15:]#[60 * 15:] #shuffle previous rate by 15 minutes
 
@@ -379,6 +408,21 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
         # Run with controls
         _ = hpwh.update(control_signal=control_signal)
 
+        # Run with controls        
+
+        # ==================== PER-TIMESTEP LOGGING ====================
+        # Extract 1-minute power and unmet demand from step results
+        power_kw = _.get("Water Heating Electric Power (kW)", 0.0)
+        unmet_kw = _.get("Hot Water Unmet Demand (kW)", 0.0)
+
+        # Convert kW to kWh for the 1-minute interval (1 min = 1/60 hr)
+        energy_kwh = power_kw / 60.0
+        unmet_kwh = unmet_kw / 60.0
+
+        # Write to log
+        log_file.write(f"{t},{unmet_kwh},{energy_kwh}\n")
+        # ==============================================================
+    log_file.close()
         
     df = hpwh.finalize()
 
@@ -458,7 +502,7 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
     if method == 'constant':
         to_save.to_csv(f'output_site_{site_number}_{setpoint}.csv', header=True, index=False)    
     else:
-        to_save.to_csv(f'output_site_{site_number}_{method}_{draw}.csv', header=True, index=False)
+        to_save.to_csv(f'output_site_{site_number}_{method}_{draw}_{sim_nodes}_{bisection_iter}.csv', header=True, index=False)
 
 
 
@@ -466,13 +510,6 @@ def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPO
 # SITES
 # ================================ 22096
 
-sites = [22096, 13438,
-     11531, 23744, 11289, 13265, 23666, 
-    90028, 90050, 90135, 10441, 90015, 90030,
-    21578, 22897, 90023, 90130, 99094, 90051,
-     90131, 90034, 99148, 99162, 99103,
-    99092, 99084
-]
 
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -481,9 +518,20 @@ import pandas as pd
 
 #Good test sites 90069 90130, 21578, 90023, 90051, 90131, 90034
 #sites = [90069, 90130, 21578, 90023, 90051, 90131, 90034]
-sites = [22096, 13438, 90069]
+sites = [90135, 99084, 99092, 99094, 99103, 99148, 99162]
 
-time_metrics = pd.DataFrame(columns=["Site", "Method", "Bisection Time (s)", "Nonlinear Time (s)"])
+sites = [13438, 22096, 90069]
+
+
+sites = [22096, 13438,
+     11531, 23744, 11289, 13265, 23666, 
+    90028, 90050, 90135, 10441, 90015, 90030,
+    21578, 22897, 90023, 90130, 99094, 90051,
+     90131, 90034, 99148, 99162, 99103,
+    99092, 99084, 90069, 90023
+]
+
+time_metrics = pd.DataFrame(columns=["Site", "Method", "Bisection Time 100 iterations (s)"])
 
 for site_number in sites:
 
@@ -499,37 +547,42 @@ for site_number in sites:
     # except:
     #     continue
 
-    # try:
-    #     method = "bisection" #nonlinear or bisection
-
-    #     #bisection_start = time.process_time()
-    #     simulate_12_node(site_number, method, draw="perfect")
-    #     #bisection_end = time.process_time()
-    #     #elapsed = bisection_end - bisection_start
-    #     #print("Bisection Time (s): ", elapsed)
-    # except:
-    #     continue
-
-
-
     try:
+        method = "bisection" #nonlinear or bisection
 
-        method = "nonlinear" #nonlinear or bisection
-        simulate_12_node(site_number, method, draw="perfect")
+        simulate_12_node(site_number, method, draw="rolling", sim_nodes=2, bisection_iter=5)
+        simulate_12_node(site_number, method, draw="perfect", sim_nodes=2, bisection_iter=5)
+
+        simulate_12_node(site_number, method, draw="rolling", sim_nodes=1, bisection_iter=5)
+        simulate_12_node(site_number, method, draw="perfect", sim_nodes=1, bisection_iter=5)
+
+
+  
+       
 
     except:
-        print(f"Simulation failed for site {site_number} using nonlinear method.")
         continue
 
 
 
+    # try:
 
-#     #Store the timing metrics
-#     time_metrics = time_metrics.append({
-#         "Site": site_number,
-#         "Method": "Bisection",
-#         "Bisection Time (s)": bisection_end - bisection_start,
-#         "Nonlinear Time (s)": nonlinear_end - nonlinear_start
-#     }, ignore_index=True)
+    #     method = "nonlinear" #nonlinear or bisection
+    #     simulate_12_node(site_number, method, draw="perfect")
+
+    # except:
+    #     print(f"Simulation failed for site {site_number} using nonlinear method.")
+    #     continue
+
+
+
+
+    #Store the timing metrics
+    # time_metrics = time_metrics.append({
+    #     "Site": site_number,
+    #     "Method": "Bisection",
+    #     "Bisection Time 100 iterations (s)": bisection_end - bisection_start,
+    #     #"Nonlinear Time (s)": nonlinear_end - nonlinear_start
+    # }, ignore_index=True)
 
 # time_metrics.to_csv("ecotope_bisection_nonlinear_timing_metrics.csv", index=False)

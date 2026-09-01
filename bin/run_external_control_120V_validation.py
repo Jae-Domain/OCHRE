@@ -27,12 +27,12 @@ SITE_CAPACITIES = { 50: [1, 4, 22, 25, 30], #1, 4, 30
                    65: [21, 29, 28, 27, 19, 23, 24], #, 2, 10,  error with 7, 16, 21
                    80: [3, 5, 8, 9, 11, 12, 15, 18]} #Taken from NBI dataset 
 
-#high temp sites
-SITE_CAPACITIES = { 50: [1, 22, 25], #1, 4, 30
-                   65: [14, 7, 16, 21, 28, 27, 19,], #, 2, 10,  error with 7, 16, 21
-                   80: [3, 5, 8, 15]} #Taken from NBI dataset 
+# #high temp sites
+# SITE_CAPACITIES = { 50: [1, 22, 25], #1, 4, 30
+#                    65: [14, 7, 16, 21, 28, 27, 19,], #, 2, 10,  error with 7, 16, 21
+#                    80: [3, 5, 8, 15]} #Taken from NBI dataset 
 
-SITE_CAPACITIES = { 50: [1] }
+
                    
 
 
@@ -52,10 +52,14 @@ site_setpoints = {
     1: 50.53, 2:48.82, 3:52.27, 4:49.52, 5:60, 7:49.35, 8:50.54, 9:48.34, 10:49.07, 11:50, 12:49.06, 13:49.28, 14:50.96, 15:51.43, 16:53.15, 18:48.53, 19:58.11, 21:50.16, 22:56.71, 23:51.12, 24:50.75, 25:51.22, 27:51.05, 28:51.6, 29:49.75, 30:50.75
 }
 
+site_setpoints={
+    1: 48.9, 2:48.9, 3:48.9
+}
+
 
 #Testing Parameters- edit me
 #------------------------------------------------------------#
-gallons_array = [50]
+gallons_array = [50, 65, 80]
 
 for gallons in gallons_array:
     capacity = gallons * GAL_IN_L #Gallons to L
@@ -78,7 +82,7 @@ for gallons in gallons_array:
         
         #start_date = dt.datetime(2022, 12, 14, 4, 0) #site_1 at 4am
 
-        setpoint_default = site_setpoints[site_number]
+        setpoint_default = 48.9#site_setpoints[site_number]
 
         # if site_number == 23 or site_number == 24:
         #     setpoint_default = 51.67 if site_number == 23 else 60
