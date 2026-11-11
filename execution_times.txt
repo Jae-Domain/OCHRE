@@ -1,0 +1,2 @@
+Line 1 time: 16.9107s
+Line 2 time: 5.3356s

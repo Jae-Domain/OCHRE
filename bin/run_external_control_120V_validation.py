@@ -32,7 +32,10 @@ SITE_CAPACITIES = { 50: [1, 4, 22, 25, 30], #1, 4, 30
 #                    65: [14, 7, 16, 21, 28, 27, 19,], #, 2, 10,  error with 7, 16, 21
 #                    80: [3, 5, 8, 15]} #Taken from NBI dataset 
 
-
+ #high temp sites
+SITE_CAPACITIES = { 50: [1,], #1, 4, 30
+                    65: [2], #, 2, 10,  error with 7, 16, 21
+                    80: [3]} #Taken from NBI dataset 
                    
 
 

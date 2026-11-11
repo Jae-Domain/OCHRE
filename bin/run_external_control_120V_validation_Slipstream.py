@@ -1,0 +1,180 @@
+import os
+import datetime as dt
+import pandas as pd
+import numpy as np
+
+
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+#from ochre.utils import default_input_path  # for using sample files
+from ochre import HeatPumpWaterHeater
+
+#READ ME
+# Input files located in ~\ochre\defaults\Input Files\Temperature Values (temp and flow data fr/ 4am for n days)
+# Output is created in home directory under output_site_1_48.9_12.csv
+# Output columns: Hot Water Outlet Temperature (C),Hot Water Delivered (W),Water Heating Electric Power (kW),T_AMB,Hot Water Delivered (kW),Draw Data,Setpoint
+
+#GLOBAL PARAMS
+MIN_IN_DAY = 1440
+GAL_IN_L = 3.78541
+UA_VALUES = {40: 2.638889,
+             50: 2.375,
+             65: 2.955556,
+             80: 3.008333}
+
+
+#Run 120V simulation for n simulation days
+
+# Define equipment and simulation parameters
+setpoint_default = 48.9 #Assumed 120 degree setpoint
+#setpoint_default = 51.67 #125
+# setpoint_default = 60 #140
+deadband_default = 5.56 #8.17 # in C
+max_setpoint = 60
+min_setpoint = 49
+water_nodes = 12
+
+# site_setpoints = {
+#     1: 50.53, 2:48.82, 3:52.27, 4:49.52, 5:60, 7:49.35, 8:50.54, 9:48.34, 10:49.07, 11:50, 12:49.06, 13:49.28, 14:50.96, 15:51.43, 16:53.15, 18:48.53, 19:58.11, 21:50.16, 22:56.71, 23:51.12, 24:50.75, 25:51.22, 27:51.05, 28:51.6, 29:49.75, 30:50.75
+# }
+
+
+#Testing Parameters- edit me
+#------------------------------------------------------------#
+gallons = 80
+
+capacity = gallons * GAL_IN_L #Gallons to L
+simulation_days = 350
+
+
+#setpoint_default = 48.9 #Assumed 120 degree setpoint
+
+sites = ['focus_7']
+
+for site_number in sites: #runs simulations for specified site number
+
+    #Data values
+    #temperature input values
+    temp_data = pd.read_csv(f'ochre\\defaults\\Input Files\\cleaned_focus_7.csv')
+
+    # %m = Month, %d = Day, %Y = 4-digit Year, %H = Hour, %M = Minute
+    start_time = temp_data['datetime'].values[0]  # first row of the datetime column
+    start_date = pd.to_datetime(start_time, format="%Y-%m-%d %H:%M:%S%z")
+
+    setpoint_default = 48.9#site_setpoints[site_number]
+
+
+
+    simulation_days = min(350, (len(temp_data) // MIN_IN_DAY) - 1)
+    print(f"Simulating Site {site_number} for {simulation_days} days")
+    simulation_duration = simulation_days * MIN_IN_DAY
+
+    print("Simulating Setpoint: ", setpoint_default)
+    equipment_args = {
+        "start_time": start_date,  # year, month, day, hour, minute
+        "time_res": dt.timedelta(minutes=1),
+        "duration": dt.timedelta(days = simulation_days),
+        "verbosity": 9,  # required to get setpoint and deadband in results
+        "save_results": False,  # if True, must specify output_path
+        #"output_path": os.getcwd(),        # Equipment parameters
+        "Setpoint Temperature (C)": setpoint_default,
+        "Tank Volume (L)": capacity,
+        "Tank Height (m)": 1.22, #double check if these are accurate
+        "UA (W/K)": UA_VALUES[gallons],
+        "HPWH COP (-)": 4.2,
+        "save_matrices":False,
+        "Low Power HPWH":True,
+        "water_nodes": water_nodes,
+        "HPWH Capacity (W)": 1495,
+        "Deadband Temperature (C)": deadband_default
+    }
+
+    # Create water draw schedule
+    times = pd.date_range(
+        equipment_args["start_time"],
+        equipment_args["start_time"] + equipment_args["duration"],
+        freq=equipment_args["time_res"],
+        inclusive="left",
+    )
+
+
+    withdraw_rate = temp_data['flow_L'].values[0: simulation_duration]
+    ambient =  temp_data['t_inlet_air_C'].values[0: simulation_duration]
+    wet = temp_data['t_wet_bulb_C'].values[0: simulation_duration] # Required for HPWH
+    mains = temp_data['tCWIn_C'].values[0: simulation_duration]
+
+    #Initialize Schedule
+    #should capacity be added to our schedule?
+    schedule = pd.DataFrame(
+        {
+            "Water Heating (L/min)": withdraw_rate,
+            "Water Heating Setpoint (C)": setpoint_default,  # Setting so that it can reset
+            "Water Heating Deadband (C)": deadband_default,  # Setting so that it can reset
+            "Zone Temperature (C)": ambient,
+            "Zone Wet Bulb Temperature (C)": wet,  # Required for HPWH
+            "Mains Temperature (C)":  mains
+        },
+        index=times,
+    )
+
+    # Initialize equipment
+    hpwh = HeatPumpWaterHeater(schedule=schedule, **equipment_args)
+
+    # Simulate
+    data = pd.DataFrame()
+
+    data = {'draw_data' :[], 'setpoint' :[]}
+    control_signal = {}
+    setpoints = []
+
+    #Simulate at each timestep
+    for t in hpwh.sim_times:
+        setpoints.append(setpoint_default)
+        _ = hpwh.update(control_signal=control_signal)
+
+
+    df = hpwh.finalize()
+
+    cols = df.columns.tolist()
+
+    cols_to_plot = [
+        "Hot Water Outlet Temperature (C)",
+        "Hot Water Average Temperature (C)",
+        "Water Heating Deadband Upper Limit (C)",
+        "Water Heating Deadband Lower Limit (C)",
+        "Water Heating Electric Power (kW)",
+        "Hot Water Unmet Demand (kW)",
+        "Hot Water Delivered (L/min)",
+    ]
+
+    cols_to_save = [
+        "Hot Water Outlet Temperature (C)",
+        'Hot Water Delivered (W)',
+        "Water Heating Electric Power (kW)",
+        "Water Heating Mode",
+    ]
+
+    # Ensure datetime index at 1-minute frequency
+
+    # Convert to kW per minute
+    hot_water_delivered_kW = df['Hot Water Delivered (W)'] / 1000 
+    to_save = pd.DataFrame()
+
+    to_save = df.loc[:, cols_to_save]
+    to_save["Time"] = hpwh.sim_times
+    to_save.set_index("Time")
+    
+
+    to_save["Hot Water Delivered (kW)"] =   pd.Series(hot_water_delivered_kW, index=to_save.index)
+
+    to_save["Draw Data"] = pd.Series(withdraw_rate, index=to_save.index)
+    to_save["Setpoint"] = pd.Series(setpoint_default, index=to_save.index)
+
+    to_save = to_save[1:]
+    show_header = True
+    to_save.to_csv(f'output_site_120V_{site_number}_(L)_{setpoint_default}.csv', header=show_header, index=False)
+
+    #plt.show()
+
+    print("Simulation Completed: ", f'output_site_{site_number}_{setpoint_default}_{water_nodes}.csv')
