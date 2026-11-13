@@ -127,7 +127,8 @@ def predict_two_node(setpoint, temp_states, temp_amb, temp_mains, draw, duration
     if nodes == 1:
         hpwh.model.states[:] = np.array([(temp_n1 + temp_n2) / 2])
     elif nodes == 12:
-        hpwh.model.states[:] = temp_states
+        hpwh.model.states = temp_states
+        #hpwh.model.states[:] = np.array([temp_n1, temp_n1, temp_n1, temp_n2, temp_n2, temp_n2, temp_n2, temp_n2, temp_n2, temp_n2, temp_n2, temp_n2])#temp_states
     else:
         hpwh.model.states[:] = np.array([temp_n1, temp_n2])
 
@@ -312,8 +313,8 @@ def bisection_control(temp_states, setpoint_initial, ambient, mains, draw, horiz
 def simulate_12_node(site_number, method = "bisection", setpoint_default = SETPOINT_DEFAULT, tank_volume = TANK_VOLUME, draw = "rolling", horizon = 2, backlog = 14, mpc_freq = 15, sim_nodes = 2, bisection_iter = 5, low_power = True, wetbulb = 15, ambient = 20, mains = 7):
     df = pd.read_csv(f"ochre\\defaults\\Input Files\\Ecotope_flow\\net_flow_{site_number}.csv", header=None)
     first_line = df.iloc[MONTH_MIN, 0] #get start_time two weeks into dataset
-    #start_time = dt.datetime.strptime(first_line.split(",")[0], "%Y-%m-%d %H:%M:%S") #parse start_time from first line of csv
-    start_time = dt.datetime.strptime(first_line.split(",")[0], "%m/%d/%Y %H:%M") #parse start_time from first line of csv
+    start_time = dt.datetime.strptime(first_line.split(",")[0], "%Y-%m-%d %H:%M:%S") #parse start_time from first line of csv
+    #start_time = dt.datetime.strptime(first_line.split(",")[0], "%m/%d/%Y %H:%M") #parse start_time from first line of csv
     
     simulation_days = len(df) // (24 * 60)  - 30 # Calculate the number of days based on the number of rows in the CSV file    
     #simulation_days = 1
@@ -507,9 +508,9 @@ sites_g = {
 }
 
 sites_g = {
-    40: ['sample']
-    #60:  [10441],
-    #80: [90069, 90130, 99094, 21578],
+    #40: ['sample']
+    60:  [10441],
+    80: [90069, 90130, 99094, 21578],
 }
 for gallon_size in sites_g:
     sites = sites_g[gallon_size]
@@ -524,19 +525,27 @@ for gallon_size in sites_g:
         import time
 
         #Compare 2 and 12 node simulations
-        simulate_12_node(site_number, method = "bisection", draw="perfect", sim_nodes=2, low_power = True, horizon = 2)
-        simulate_12_node(site_number, method = "bisection", draw="perfect", sim_nodes=12, low_power = True, horizon = 2)
+        #simulate_12_node(site_number, method = "bisection", draw="perfect", sim_nodes=2, low_power = True, horizon = 13, mpc_freq = 5)
+        #simulate_12_node(site_number, method = "bisection", draw="perfect", sim_nodes=2, low_power = True, horizon = 2, mpc_freq = 15)
+        #simulate_12_node(site_number, method = "bisection", draw="perfect", sim_nodes=12, low_power = True, horizon = 2, mpc_freq = 15)
         #simulate_12_node(site_number, method = "constant", setpoint_default = 60, low_power = True, horizon = 3)
 
         #DOE Experiments
         #abC
-        #simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = 3, backlog = 7, mpc_freq = 15)
+        simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = horizon, backlog = 7, mpc_freq = 5)
         #Abc
-        #simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = 13, backlog = 7, mpc_freq = 5)
+        simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = horizon, backlog = 7, mpc_freq = 15)
+
+        simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = horizon, backlog = 21, mpc_freq = 5)
+        #Abc
+
+        simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = horizon, backlog = 21, mpc_freq = 15)
         #ABC
-        #simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = 13, backlog = 28, mpc_freq = 15)
+        simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = horizon, backlog = 28, mpc_freq = 5)
         #aBc
-        #simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = 3, backlog = 28, mpc_freq = 5)
+        simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=2, low_power = True, horizon = horizon, backlog = 28, mpc_freq = 15)
+
+        simulate_12_node(site_number, method = "bisection", draw="rolling", sim_nodes=12, low_power = True, horizon = 3, backlog = 14, mpc_freq = 15)
 
         #1-node
         #simulate_12_node(site_number, method = "bisection", draw="perfect", sim_nodes=1, low_power = True, horizon = horizon)
